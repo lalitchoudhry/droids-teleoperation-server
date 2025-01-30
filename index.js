@@ -12,21 +12,48 @@ const server = http.createServer(app);
 // Create WebSocket server
 const wss = new WebSocket.Server({ server });
 
-// Store connected clients
-const clients = new Set();
+// Store clients with their roles and stream types
+const clients = new Map(); // Using Map to store client info
 
 // WebSocket connection handler
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
   console.log("New client connected");
-  clients.add(ws);
 
   ws.on("message", (data) => {
-    // Broadcast received frame to all other clients
-    clients.forEach((client) => {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
-        client.send(data);
+    try {
+      // First try to parse as JSON for control messages
+      const jsonData = JSON.parse(data);
+
+      if (jsonData.type === "register") {
+        // Register client role and stream type
+        clients.set(ws, {
+          role: jsonData.role, // 'streamer' or 'viewer'
+          streamId: jsonData.streamId, // 'camera1', 'camera2', etc.
+        });
+        console.log(
+          `Client registered as ${jsonData.role} for stream ${jsonData.streamId}`
+        );
       }
-    });
+    } catch {
+      // If not JSON, treat as video data
+      const clientInfo = clients.get(ws);
+      if (clientInfo && clientInfo.role === "streamer") {
+        // Broadcast to viewers of this specific stream
+        const streamId = clientInfo.streamId;
+        clients.forEach((info, client) => {
+          if (
+            client !== ws &&
+            client.readyState === WebSocket.OPEN &&
+            info.role === "viewer" &&
+            (info.streamId === streamId || info.streamId === "all") // Add support for "all" streams
+          ) {
+            // Add streamId to the message
+            const metadata = { streamId };
+            client.send(data, { metadata }); // Send with metadata
+          }
+        });
+      }
+    }
   });
 
   ws.on("close", () => {
@@ -36,6 +63,7 @@ wss.on("connection", (ws) => {
 
   ws.on("error", (error) => {
     console.error("WebSocket error:", error);
+    clients.delete(ws);
   });
 });
 
