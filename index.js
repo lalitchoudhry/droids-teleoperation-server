@@ -15,41 +15,51 @@ const wss = new WebSocket.Server({ server });
 // Store clients with their roles and stream types
 const clients = new Map(); // Using Map to store client info
 
+// Add active streams tracking
+const activeStreams = new Set();
+
 // WebSocket connection handler
 wss.on("connection", (ws, req) => {
-  console.log("New client connected");
-
   ws.on("message", (data) => {
     try {
-      // First try to parse as JSON for control messages
       const jsonData = JSON.parse(data);
 
       if (jsonData.type === "register") {
-        // Register client role and stream type
         clients.set(ws, {
-          role: jsonData.role, // 'streamer' or 'viewer'
-          streamId: jsonData.streamId, // 'camera1', 'camera2', etc.
+          role: jsonData.role,
+          streamId: jsonData.streamId,
         });
-        console.log(
-          `Client registered as ${jsonData.role} for stream ${jsonData.streamId}`
-        );
+
+        // Update active streams list
+        if (jsonData.role === "streamer") {
+          activeStreams.add(jsonData.streamId);
+          // Broadcast active streams list to all multi-viewers
+          const activeStreamsMessage = JSON.stringify({
+            type: "active-streams",
+            streams: Array.from(activeStreams),
+          });
+
+          clients.forEach((info, client) => {
+            if (
+              client.readyState === WebSocket.OPEN &&
+              info.role === "multi-viewer"
+            ) {
+              client.send(activeStreamsMessage);
+            }
+          });
+        }
       }
     } catch {
-      // If not JSON, treat as video data
+      // Handle binary video data
       const clientInfo = clients.get(ws);
-      if (clientInfo && clientInfo.role === "streamer") {
-        // Broadcast to viewers of this specific stream
-        const streamId = clientInfo.streamId;
+      if (clientInfo?.role === "streamer") {
         clients.forEach((info, client) => {
           if (
             client !== ws &&
             client.readyState === WebSocket.OPEN &&
-            info.role === "viewer" &&
-            (info.streamId === streamId || info.streamId === "all") // Add support for "all" streams
+            (info.streamId === clientInfo.streamId || info.streamId === "all")
           ) {
-            // Add streamId to the message
-            const metadata = { streamId };
-            client.send(data, { metadata }); // Send with metadata
+            client.send(data);
           }
         });
       }
@@ -57,7 +67,24 @@ wss.on("connection", (ws, req) => {
   });
 
   ws.on("close", () => {
-    console.log("Client disconnected");
+    const clientInfo = clients.get(ws);
+    if (clientInfo?.role === "streamer") {
+      activeStreams.delete(clientInfo.streamId);
+      // Notify multi-viewers about stream removal
+      const activeStreamsMessage = JSON.stringify({
+        type: "active-streams",
+        streams: Array.from(activeStreams),
+      });
+
+      clients.forEach((info, client) => {
+        if (
+          client.readyState === WebSocket.OPEN &&
+          info.role === "multi-viewer"
+        ) {
+          client.send(activeStreamsMessage);
+        }
+      });
+    }
     clients.delete(ws);
   });
 
