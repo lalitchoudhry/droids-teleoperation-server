@@ -18,10 +18,12 @@ const clients = new Map(); // Using Map to store client info
 // Add active streams tracking
 const activeStreams = new Set();
 
+// Add temporary frame metadata storage
+const frameMetadata = new Map();
+
 // WebSocket connection handler
 wss.on("connection", (ws, req) => {
   ws.on("message", (data) => {
-    // First try to parse as JSON
     try {
       const jsonData = JSON.parse(data);
 
@@ -48,17 +50,22 @@ wss.on("connection", (ws, req) => {
             }
           });
         }
+      } else if (jsonData.type === "frame") {
+        // Store metadata temporarily for the next binary frame
+        frameMetadata.set(ws, jsonData.streamId);
       }
     } catch (error) {
-      // If JSON parsing fails, assume it's binary video data
+      // If JSON parsing fails, it's binary video data
       const clientInfo = clients.get(ws);
-      if (clientInfo?.role === "streamer") {
+      const streamId = frameMetadata.get(ws); // Get the stored streamId
+
+      if (clientInfo?.role === "streamer" && streamId) {
         // Forward video data only to relevant viewers
         clients.forEach((info, client) => {
           if (
             client !== ws &&
             client.readyState === WebSocket.OPEN &&
-            (info.streamId === clientInfo.streamId || info.streamId === "all")
+            (info.streamId === streamId || info.streamId === "all")
           ) {
             try {
               client.send(data);
@@ -67,6 +74,8 @@ wss.on("connection", (ws, req) => {
             }
           }
         });
+        // Clear the metadata after use
+        frameMetadata.delete(ws);
       }
     }
   });
