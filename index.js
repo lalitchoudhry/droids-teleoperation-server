@@ -51,7 +51,7 @@ wss.on("connection", (ws, req) => {
           });
         }
       } else if (jsonData.type === "frame") {
-        // Store metadata temporarily for the next binary frame
+        // Store metadata temporarily for the next binary fram
         frameMetadata.set(ws, jsonData.streamId);
       }
     } catch (error) {
