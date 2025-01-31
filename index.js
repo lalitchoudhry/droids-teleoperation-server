@@ -21,6 +21,7 @@ const activeStreams = new Set();
 // WebSocket connection handler
 wss.on("connection", (ws, req) => {
   ws.on("message", (data) => {
+    // First try to parse as JSON
     try {
       const jsonData = JSON.parse(data);
 
@@ -30,7 +31,6 @@ wss.on("connection", (ws, req) => {
           streamId: jsonData.streamId,
         });
 
-        // Update active streams list
         if (jsonData.role === "streamer") {
           activeStreams.add(jsonData.streamId);
           // Broadcast active streams list to all multi-viewers
@@ -49,17 +49,22 @@ wss.on("connection", (ws, req) => {
           });
         }
       }
-    } catch {
-      // Handle binary video data
+    } catch (error) {
+      // If JSON parsing fails, assume it's binary video data
       const clientInfo = clients.get(ws);
       if (clientInfo?.role === "streamer") {
+        // Forward video data only to relevant viewers
         clients.forEach((info, client) => {
           if (
             client !== ws &&
             client.readyState === WebSocket.OPEN &&
             (info.streamId === clientInfo.streamId || info.streamId === "all")
           ) {
-            client.send(data);
+            try {
+              client.send(data);
+            } catch (sendError) {
+              console.error("Error sending video data:", sendError);
+            }
           }
         });
       }
